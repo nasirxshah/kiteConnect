@@ -8,6 +8,9 @@ import kiteconnect.exeptions as ex
 from kiteconnect.request import RequestSession
 from kiteconnect.routes import Route
 
+__all__ = ["KiteConnect", "Product", "Exchange", "OrderType", "Validity",
+           "Variety", "TransactionType", "PositionType", "Margin"]
+
 
 class Product:
     CNC = "CNC"
@@ -84,13 +87,20 @@ class GttStatus:
 
 
 class KiteConnect:
-    def __init__(self, reqSession: RequestSession, root: str | None = None) -> None:
-        self.reqSession = reqSession
+    _default_root_uri = "https://api.kite.trade"
+
+    def __init__(self, apikey: str, access_token: str, root: str | None = None) -> None:
+        self.on_token_expired: Callable | None = None
+
+        self.reqSession = RequestSession(
+            root=root if root else self._default_root_uri)
+        self.reqSession.apikey = apikey
+        self.reqSession.access_token = access_token
+        self.reqSession.session_expiry_hook = self.on_token_expired
 
     def profile(self):
         """Get user profile details."""
-        resp = self.reqSession.get(Route.USER_PROFILE)
-        return self.reqSession.extract_json(response=resp)
+        return self.reqSession.get(Route.USER_PROFILE)
 
     def margins(self, segment=None):
         """Get account balance and cash margin details for a particular segment.
@@ -98,12 +108,11 @@ class KiteConnect:
         - `segment` is the trading segment (eg: equity or commodity)
         """
         if segment:
-            resp = self.reqSession.get(
+            return self.reqSession.get(
                 Route.USER_MARGINS_SEGMENT, kwargs={"segment": segment})
-            return self.reqSession.extract_json(response=resp)
+
         else:
-            resp = self.reqSession.get(Route.USER_MARGINS)
-            return self.reqSession.extract_json(response=resp)
+            return self.reqSession.get(Route.USER_MARGINS)
 
     # order
 
@@ -133,9 +142,8 @@ class KiteConnect:
             if value is None:
                 del (data[key])
 
-        resp = self.reqSession.post(Route.ORDER_PLACE, kwargs={
-                                    "variety": variety}, data=data)
-        return self.reqSession.extract_json(response=resp)["order_id"]
+        return self.reqSession.post(Route.ORDER_PLACE, kwargs={
+                                    "variety": variety}, data=data)["order_id"]
 
     def modify_order(self,
                      variety,
@@ -155,25 +163,22 @@ class KiteConnect:
             if value is None:
                 del (data[key])
 
-        resp = self.reqSession.put(Route.ORDER_MODIFY,
+        return self.reqSession.put(Route.ORDER_MODIFY,
                                    kwargs={"variety": variety,
                                            "order_id": order_id},
-                                   data=data)
-        return self.reqSession.extract_json(response=resp)["order_id"]
+                                   data=data)["order_id"]
 
     def cancel_order(self, variety, order_id, parent_order_id=None):
         """Cancel an order."""
-        resp = self.reqSession.delete(Route.ORDER_CANCEL,
+        return self.reqSession.delete(Route.ORDER_CANCEL,
                                       kwargs={"variety": variety,
                                               "order_id": order_id},
-                                      params={"parent_order_id": parent_order_id})
-        return self.reqSession.extract_json(response=resp)["order_id"]
+                                      params={"parent_order_id": parent_order_id})["order_id"]
 
     def exit_order(self, variety, order_id, parent_order_id=None):
         """Exit a CO order."""
-        resp = self.cancel_order(
+        return self.cancel_order(
             variety, order_id, parent_order_id=parent_order_id)
-        return self.reqSession.extract_json(response=resp)
 
     def _format_response(self, data):
         """Parse and format responses."""
@@ -190,8 +195,8 @@ class KiteConnect:
     # orderbook and tradebook
     def orders(self):
         """Get list of orders."""
-        resp = self.reqSession.get(Route.ORDERS)
-        return self._format_response(self.reqSession.extract_json(response=resp))
+        data = self.reqSession.get(Route.ORDERS)
+        return self._format_response(data)
 
     def order_history(self, order_id):
         """
@@ -199,10 +204,10 @@ class KiteConnect:
 
         - `order_id` is the ID of the order to retrieve order history.
         """
-        resp = self.reqSession.get(Route.ORDER_INFO, kwargs={
+        data = self.reqSession.get(Route.ORDER_INFO, kwargs={
                                    "order_id": order_id})
 
-        return self._format_response(self.reqSession.extract_json(response=resp))
+        return self._format_response(data)
 
     def trades(self):
         """
@@ -211,8 +216,8 @@ class KiteConnect:
         An order can be executed in tranches based on market conditions.
         These trades are individually recorded under an order.
         """
-        resp = self.reqSession.get(Route.TRADES)
-        return self._format_response(self.reqSession.extract_json(response=resp))
+        data = self.reqSession.get(Route.TRADES)
+        return self._format_response(data)
 
     def order_trades(self, order_id):
         """
@@ -220,24 +225,21 @@ class KiteConnect:
 
         - `order_id` is the ID of the order to retrieve trade history.
         """
-        resp = self.reqSession.get(Route.ORDER_TRADES, kwargs={
+        data = self.reqSession.get(Route.ORDER_TRADES, kwargs={
                                    "order_id": order_id})
-        return self._format_response(self.reqSession.extract_json(response=resp))
+        return self._format_response(data)
 
     def positions(self):
         """Retrieve the list of positions."""
-        resp = self.reqSession.get(Route.PORTFOLIO_POSITIONS)
-        return self.reqSession.extract_json(response=resp)
+        return self.reqSession.get(Route.PORTFOLIO_POSITIONS)
 
     def holdings(self):
         """Retrieve the list of equity holdings."""
-        resp = self.reqSession.get(Route.PORTFOLIO_HOLDINGS)
-        return self.reqSession.extract_json(response=resp)
+        return self.reqSession.get(Route.PORTFOLIO_HOLDINGS)
 
     def get_auction_instruments(self):
         """ Retrieves list of available instruments for a auction session """
-        resp = self.reqSession.get(Route.PORTFOLIO_HOLDINGS_AUCTION)
-        return self.reqSession.extract_json(response=resp)
+        return self.reqSession.get(Route.PORTFOLIO_HOLDINGS_AUCTION)
 
     def convert_position(self,
                          exchange,
@@ -248,7 +250,7 @@ class KiteConnect:
                          old_product,
                          new_product):
         """Modify an open position's product type."""
-        resp = self.reqSession.put(Route.PORTFOLIO_POSITIONS_CONVERT, data={
+        return self.reqSession.put(Route.PORTFOLIO_POSITIONS_CONVERT, data={
             "exchange": exchange,
             "tradingsymbol": tradingsymbol,
             "transaction_type": transaction_type,
@@ -257,18 +259,17 @@ class KiteConnect:
             "old_product": old_product,
             "new_product": new_product
         })
-        return self.reqSession.extract_json(response=resp)
 
     # mf order
 
     def mf_orders(self, order_id=None):
         """Get all mutual fund orders or individual order info."""
         if order_id:
-            resp = self.reqSession.get(Route.MF_ORDER_INFO, kwargs={
+            return self.reqSession.get(Route.MF_ORDER_INFO, kwargs={
                                        "order_id": order_id})
             return self._format_response(self.reqSession.extract_json(response=resp))
         else:
-            resp = self.reqSession.get(Route.MF_ORDERS)
+            return self.reqSession.get(Route.MF_ORDERS)
             return self._format_response(self.reqSession.extract_json(response=resp))
 
     def place_mf_order(self,
@@ -278,29 +279,27 @@ class KiteConnect:
                        amount=None,
                        tag=None):
         """Place a mutual fund order."""
-        resp = self.reqSession.post(Route.MF_ORDER_PLACE, data={
+        return self.reqSession.post(Route.MF_ORDER_PLACE, data={
             "tradingsymbol": tradingsymbol,
             "transaction_type": transaction_type,
             "quantity": quantity,
             "amount": amount,
             "tag": tag
         })
-        return self.reqSession.extract_json(response=resp)
 
     def cancel_mf_order(self, order_id):
         """Cancel a mutual fund order."""
-        resp = self.reqSession.delete(
+        return self.reqSession.delete(
             Route.MF_ORDER_CANCEL, kwargs={"order_id": order_id})
-        return self.reqSession.extract_json(response=resp)
 
     def mf_sips(self, sip_id=None):
         """Get list of all mutual fund SIP's or individual SIP info."""
         if sip_id:
-            resp = self.reqSession.get(
+            return self.reqSession.get(
                 Route.MF_SIP_INFO, kwargs={"sip_id": sip_id})
             return self._format_response(self.reqSession.extract_json(response=resp))
         else:
-            resp = self.reqSession.get(Route.MF_SIPS)
+            return self.reqSession.get(Route.MF_SIPS)
             return self._format_response(self.reqSession.extract_json(response=resp))
 
     def place_mf_sip(self,
@@ -312,7 +311,7 @@ class KiteConnect:
                      instalment_day=None,
                      tag=None):
         """Place a mutual fund SIP."""
-        resp = self.reqSession.post(Route.MF_SIP_PLACE, data={
+        return self.reqSession.post(Route.MF_SIP_PLACE, data={
             "tradingsymbol": tradingsymbol,
             "amount": amount,
             "initial_amount": initial_amount,
@@ -321,7 +320,6 @@ class KiteConnect:
             "instalment_day": instalment_day,
             "tag": tag
         })
-        return self.reqSession.extract_json(response=resp)
 
     def modify_mf_sip(self,
                       sip_id,
@@ -331,7 +329,7 @@ class KiteConnect:
                       frequency=None,
                       instalment_day=None):
         """Modify a mutual fund SIP."""
-        resp = self.reqSession.put(Route.MF_SIP_MODIFY,
+        return self.reqSession.put(Route.MF_SIP_MODIFY,
                                    kwargs={"sip_id": sip_id},
                                    data={
                                        "amount": amount,
@@ -340,23 +338,20 @@ class KiteConnect:
                                        "frequency": frequency,
                                        "instalment_day": instalment_day
                                    })
-        return self.reqSession.extract_json(response=resp)
 
     def cancel_mf_sip(self, sip_id):
         """Cancel a mutual fund SIP."""
-        resp = self.reqSession.delete(
+        return self.reqSession.delete(
             Route.MF_SIP_CANCEL, kwargs={"sip_id": sip_id})
-        return self.reqSession.extract_json(response=resp)
 
     def mf_holdings(self):
         """Get list of mutual fund holdings."""
-        resp = self.reqSession.get(Route.MF_HOLDINGS)
-        return self.reqSession.extract_json(response=resp)
+        return self.reqSession.get(Route.MF_HOLDINGS)
 
     def mf_instruments(self) -> list[dict]:
         """Get list of mutual fund instruments."""
-        resp = self.reqSession.get(Route.MF_INSTRUMENTS)
-        return self._parse_mf_instruments(self.reqSession.extract_csv(response=resp))
+        data = self.reqSession.getcsv(Route.MF_INSTRUMENTS)
+        return self._parse_mf_instruments(data)
 
     def instruments(self, exchange=None) -> list[dict]:
         """
@@ -368,12 +363,12 @@ class KiteConnect:
         - `exchange` is specific exchange to fetch (Optional)
         """
         if exchange:
-            resp = self.reqSession.get(Route.MARKET_INSTRUMENTS, kwargs={
-                                       "exchange": exchange})
-            return self._parse_instruments(self.reqSession.extract_csv(response=resp))
+            data = self.reqSession.getcsv(Route.MARKET_INSTRUMENTS, kwargs={
+                "exchange": exchange})
+            return self._parse_instruments(data)
         else:
-            resp = self.reqSession.get(Route.MARKET_INSTRUMENTS_ALL)
-            return self._parse_instruments(self.reqSession.extract_csv(response=resp))
+            data = self.reqSession.get(Route.MARKET_INSTRUMENTS_ALL)
+            return self._parse_instruments(data)
 
     # market data
 
@@ -388,8 +383,7 @@ class KiteConnect:
         ins = instruments[0] if instruments and isinstance(
             instruments[0], list) else list(instruments)
 
-        resp = self.reqSession.get(Route.MARKET_QUOTE, params={"i": ins})
-        data = self.reqSession.extract_json(resp)
+        data = self.reqSession.get(Route.MARKET_QUOTE, params={"i": ins})
         return {key: self._format_response(value) for key, value in data.items()}
 
     def ohlc(self, *instruments):
@@ -402,8 +396,7 @@ class KiteConnect:
         ins = instruments[0] if instruments and isinstance(
             instruments[0], list) else list(instruments)
 
-        resp = self.reqSession.get(Route.MARKET_QUOTE_OHLC, params={"i": ins})
-        return self.reqSession.extract_json(response=resp)
+        return self.reqSession.get(Route.MARKET_QUOTE_OHLC, params={"i": ins})
 
     def ltp(self, *instruments):
         """
@@ -415,8 +408,7 @@ class KiteConnect:
         ins = instruments[0] if instruments and isinstance(
             instruments[0], list) else list(instruments)
 
-        resp = self.reqSession.get(Route.MARKET_QUOTE_LTP, params={"i": ins})
-        return self.reqSession.extract_json(response=resp)
+        return self.reqSession.get(Route.MARKET_QUOTE_LTP, params={"i": ins})
 
     def historical_data(self, instrument_token, from_date, to_date, interval, continuous=False, oi=False):
         """
@@ -475,22 +467,19 @@ class KiteConnect:
         ins = instruments[0] if instruments and isinstance(
             instruments[0], list) else list(instruments)
 
-        resp = self.reqSession.get(Route.MARKET_TRIGGER_RANGE,
+        return self.reqSession.get(Route.MARKET_TRIGGER_RANGE,
                                    kwargs={
                                        "transaction_type": transaction_type.lower()},
                                    params={"i": ins})
-        return self.reqSession.extract_json(response=resp)
 
     def get_gtts(self):
         """Fetch list of gtt existing in an account"""
-        resp = self.reqSession.get("gtt")
-        return self.reqSession.extract_json(response=resp)
+        return self.reqSession.get("gtt")
 
     def get_gtt(self, trigger_id):
         """Fetch details of a GTT"""
-        resp = self.reqSession.get(
+        return self.reqSession.get(
             Route.GTT_INFO, kwargs={"trigger_id": trigger_id})
-        return self.reqSession.extract_json(response=resp)
 
     def _get_gtt_payload(self, trigger_type, tradingsymbol, exchange, trigger_values, last_price, orders):
         """Get GTT payload"""
@@ -548,11 +537,10 @@ class KiteConnect:
         condition, gtt_orders = self._get_gtt_payload(
             trigger_type, tradingsymbol, exchange, trigger_values, last_price, orders)
 
-        resp = self.reqSession.post(Route.GTT_PLACE, data={
+        return self.reqSession.post(Route.GTT_PLACE, data={
             "condition": json.dumps(condition),
             "orders": json.dumps(gtt_orders),
             "type": trigger_type})
-        return self.reqSession.extract_json(response=resp)
 
     def modify_gtt(self, trigger_id, trigger_type, tradingsymbol, exchange, trigger_values, last_price, orders):
         """
@@ -571,19 +559,17 @@ class KiteConnect:
         condition, gtt_orders = self._get_gtt_payload(
             trigger_type, tradingsymbol, exchange, trigger_values, last_price, orders)
 
-        resp = self.reqSession.put(Route.GTT_MODIFY,
+        return self.reqSession.put(Route.GTT_MODIFY,
                                    kwargs={"trigger_id": trigger_id},
                                    data={
                                        "condition": json.dumps(condition),
                                        "orders": json.dumps(gtt_orders),
                                        "type": trigger_type})
-        return self.reqSession.extract_json(response=resp)
 
     def delete_gtt(self, trigger_id):
         """Delete a GTT order."""
-        resp = self.reqSession.delete(
+        return self.reqSession.delete(
             Route.GTT_DELETE, kwargs={"trigger_id": trigger_id})
-        return self.reqSession.extract_json(response=resp)
 
     def order_margins(self, data: dict):
         """
@@ -591,8 +577,7 @@ class KiteConnect:
 
         - `data` is list of orders to retrive margins detail
         """
-        resp = self.reqSession.post(Route.ORDER_MARGINS, json=data)
-        return self.reqSession.extract_json(response=resp)
+        return self.reqSession.post(Route.ORDER_MARGINS, json=data)
 
     def basket_order_margins(self, data: dict, consider_positions=True, mode=None):
         """
@@ -602,12 +587,11 @@ class KiteConnect:
         - `consider_positions` is a boolean to consider users positions
         - `mode` is margin response mode type. compact - Compact mode will only give the total margins
         """
-        resp = self.reqSession.post(Route.ORDER_MARGINS_BASKET,
+        return self.reqSession.post(Route.ORDER_MARGINS_BASKET,
                                     json=data,
                                     params={'consider_positions': consider_positions, 'mode': mode})
-        return self.reqSession.extract_json(response=resp)
 
-    def _parse_instruments(self, data) -> list[dict]:
+    def _parse_instruments(self, data: bytes) -> list[dict]:
         records = []
         reader = csv.DictReader(StringIO(data))
 

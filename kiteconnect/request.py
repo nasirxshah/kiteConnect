@@ -15,28 +15,23 @@ logger = logging.getLogger(__name__)
 
 class RequestSession:
     kite_header_version = '3'
-    _default_root_uri = "https://api.kite.trade"
     _default_timeout = 7
 
     def __init__(self,
-                 apikey: str,
-                 access_token: str | None = None,
-                 root: str | None = None,
+                 root: str,
                  debug: bool = False,
                  timeout: int | None = None,
                  proxies=None,
                  pool=None,
-                 disable_ssl: bool = False) -> None:
+                 disable_ssl: bool = False
+                 ) -> None:
 
-        self.root = root if root else self._default_root_uri
-        self.apikey = apikey
-        self.access_token = access_token
-
+        self.root = root
         self.timeout = timeout if timeout else self._default_timeout
         self.disable_ssl = disable_ssl
         self.proxies = proxies if proxies else {}
         self.debug = debug
-        self._session_expiry_hook: Callable | None = None
+        self.session_expiry_hook: Callable | None = None
 
         self.reqsession = requests.Session()
         if pool:
@@ -46,38 +41,39 @@ class RequestSession:
         # disable requests SSL warning
         urllib3.disable_warnings()
 
-    @property
-    def session_expiry_hook(self) -> Callable | None:
-        return self._session_expiry_hook
+        self.apikey: str | None = None
+        self.access_token: str | None = None
 
-    @session_expiry_hook.setter
-    def session_expiry_hook(self, callback: Callable):
-        if not callable(callback):
-            raise TypeError("Invalid input type. Only functions are accepted.")
+    def getcsv(self, route, kwargs=None, params=None) -> bytes:
+        resp = self._request("GET", route, kwargs=kwargs, params=params)
+        return self._extract_csv(response=resp)
 
-        self._session_expiry_hook = callback
+    def get(self, route, kwargs=None, params=None) -> dict:
+        resp = self._request("GET", route, kwargs=kwargs, params=params)
+        return self._extract_json(response=resp)
+
+    def post(self, route, kwargs=None, params=None, data=None, json=None) -> dict:
+        resp = self._request("POST", route, kwargs=kwargs,
+                             params=params, data=data, json=json)
+        return self._extract_json(response=resp)
+
+    def put(self,  route, kwargs=None, params=None, data=None, json=None) -> dict:
+        resp = self._request("PUT", route, kwargs=kwargs,
+                             params=params, data=data, json=json)
+        return self._extract_json(response=resp)
+
+    def delete(self, route, kwargs=None, params=None) -> dict:
+        resp = self._request(route, "DELETE", kwargs=kwargs, params=params)
+        return self._extract_json(response=resp)
 
     def _user_agent(self) -> str:
         return (__title__ + "-python/").capitalize() + __version__
-
-    def get(self, route, kwargs=None, params=None) -> requests.Response:
-        return self._request("GET", route, kwargs=kwargs, params=params)
-
-    def post(self, route, kwargs=None, params=None, data=None, json=None) -> requests.Response:
-        return self._request("POST", route, kwargs=kwargs, params=params, data=data, json=json)
-
-    def put(self,  route, kwargs=None, params=None, data=None, json=None) -> requests.Response:
-        return self._request("PUT", route, kwargs=kwargs, params=params, data=data, json=json)
-
-    def delete(self, route, kwargs=None, params=None) -> requests.Response:
-        return self._request(route, "DELETE", kwargs=kwargs, params=params)
 
     def _request(self, method: str, route: str, kwargs: dict | None = None, params: dict | None = None, data: dict | None = None, json: dict | None = None) -> requests.Response:
         # Form a restful URL
         url = urllib.parse.urljoin(
             self.root, route.format(**kwargs) if kwargs else route)
 
-        # Custom headers
         headers = {
             "X-Kite-Version": self.kite_header_version,
             "User-Agent": self._user_agent()
@@ -110,7 +106,7 @@ class RequestSession:
         except Exception as e:
             raise e
 
-    def extract_json(self, response: requests.Response):
+    def _extract_json(self, response: requests.Response) -> dict:
         if "json" in response.headers["content-type"]:
             try:
                 rdata: dict = response.json()
@@ -134,7 +130,7 @@ class RequestSession:
             raise ex.DataException(
                 f"Unknown Content-Type ({response.headers['content-type']}) with response: ({response.content})")
 
-    def extract_csv(self, response: requests.Response):
+    def _extract_csv(self, response: requests.Response) -> bytes:
         if "csv" in response.headers["content-type"]:
             return response.content
 
